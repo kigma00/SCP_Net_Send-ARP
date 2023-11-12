@@ -1,9 +1,10 @@
-헤더 부분입니다. 제 자신의 ip와 mac주소를 
+헤더 부분입니다. 
+제 자신의 ip와 mac주소를 가져오기 위한 socket 헤더와 arp request, reply를 받기위해 사용한 pcap 헤더 입니다. 
 
-#include <pcap.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pcap.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
@@ -11,6 +12,8 @@
 #include <netinet/if_ether.h>
 #include <unistd.h>
 
+기본적인 arp구조체를 정의해 준 부분입니다. 
+구조체 안에는 ethernet에 대한 구조와 arp에 대한 구조가 들어가 있습니다.
 //arp struct
 #pragma pack(push,1)
 struct arp{
@@ -31,14 +34,16 @@ struct arp{
 };
 #pragma pack(pop)
 
+Param에 대한 선언 부분입니다. 
+장비에 대한 정보 정의해줍니다.
 typedef struct {
     char* dev_;
 } Param;
-
+장비에 대한 정보를 NULL값으로 주고
 Param param = {
     .dev_ = NULL
 };
-
+실행파일 실행 시 오류 검출을 위한 부분입니다. 총 4개의 인자를 받고, 4개가 되지 않으면 오류 메세지가 출력이 됩니다. argv[1] = dev, argv[2] = victim ip, argv[3] = gateway ip 로 받습니다.
 bool parse(Param* param, int argc, char* argv[]) {
     if (argc != 4) //argv[1] = dev, argv[2] = victim ip, argv[3] = gateway ip
     {
@@ -51,25 +56,29 @@ bool parse(Param* param, int argc, char* argv[]) {
 
 int main(int argc,char**argv)
 {
+    소켓을 사용하여 ip와 mac을 받아올 문자열을 생성합니다.
     //using socket my ip, mac
     int sockfd;
     char my_ip[40];
     char reader_mac[13]={00};
     struct ifreq ifr;
 
+    장비 정보에 대한 입력값을 가져오고 해당으로 소켓을 생성합니다.
     strncpy(ifr.ifr_name,argv[1],IFNAMSIZ);
     sockfd =socket(AF_INET,SOCK_STREAM,0);
-
+    
     if (ioctl(sockfd,SIOCGIFADDR,&ifr)< 0 )
     {
         perror("ioctl");
         return -1;
     }
 
+    소켓에서 제 ip를 읽어와 저장하고 해당을 출력해줍니다.
     //my_ip print
     inet_ntop(AF_INET, ifr.ifr_addr.sa_data+2, my_ip, sizeof(struct sockaddr));
     printf("my ip : %s\n",my_ip);
 
+    소켓에서 제 mac을 읽어와 저장하고 해당을 읽어와 2자씩 끊어 hex값으로 출력해줍니다.
     //my_mac print
     if(0 == ioctl(sockfd, SIOCGIFHWADDR, &ifr)){
         for(int i=0 ; i<6 ; i++){
@@ -80,16 +89,19 @@ int main(int argc,char**argv)
         printf("my mac : %s\n\n", reader_mac);
     }
 
+    attacker에서 victim과 gateway에 mac주소를 묻기 위해 arp request하는 구조체를 작성하는 부분입니다.
     /*---------------------- arp request to victim(argv[2]) struct setting ----------------------*/
 
+    victim에게 request하기 위해 구조체 생성합니다.
     //pcap arp broadcast to victim
     struct arp broad_victim;
 
+    victim의 mac값을 모르기 때문에 broadcast로 날려해서 Mac 주소를 FF:FF:FF:FF:FF:FF로 설정합니다.  
     //eth_dmac
     for(int i=0;i<6;i++){
         broad_victim.ether_dmac[i] = 0xFF;
     }
-
+위에서 얻은 제 Mac주소를 출발지 Mac으로 설정합니다.
     //eth_smac
     //mac : char -> int
     uint8_t sender_mac[6];
@@ -101,16 +113,18 @@ int main(int argc,char**argv)
     } else{
         printf("Invalid Mac Address format\n");
     }
-
+ethernet 타입을 설정합니다. arp이기때문에 0x806으로 설정합니다.
     broad_victim.ether_type = htons(0x0806);
 
     //broad arp
     broad_victim.Hardware_Type = htons(0x0001);
+0x800 = ipv4
     broad_victim.Protocol_Type = htons(0x0800);
     broad_victim.Hardware_size = 0x06;
     broad_victim.Protocol_size = 0x04;
+arp를 request로 설정해줍니다.
     broad_victim.Opcode = htons(0x0001);
-
+출발지 Mac을 설정해줍니다. 위와 똑같이 제 Mac을 사용합니다.
     //S_MAC setting
     //mac : char -> int
     if(strlen(reader_mac) == 12){
@@ -122,23 +136,25 @@ int main(int argc,char**argv)
     else{
         printf("Invalid Mac Address format\n");
     }
-
+출발지 IP를 설정합니다. 소켓으로 얻은 제 IP를 넣습니다.
     //S_IP setting
     inet_pton(AF_INET, my_ip,&broad_victim.S_IP);
-
+목적지 Mac주소를 모르기 때문에 0.0.0.0으로 설정합니다.
     //D_MAC setting
     for(int i=0;i<6;i++){
         broad_victim.T_Mac[i] = 0x00;
     }
-
+목적지 IP는 victim의 IP를 넣어 줍니다. argv[2]에 victim의 ip를 입력하기 때문에 그대로 가져와줍니다.
     //D_IP setting
     inet_pton(AF_INET, argv[2], &broad_victim.T_IP);
 
+작성한 arp 구조체를 토대로 victim에게 request로 패킷을 전송해줍니다.
     /*------------------------------ send arp request to victim -----------------------------*/
 
     if (!parse(&param, argc, argv))
         return -1;
 
+pcap을 통해 패킷 캡처를 위해 지정된 네트워크 디바이스를 열어줍니다.
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t* pcap = pcap_open_live(param.dev_, BUFSIZ, 1, 1000, errbuf);
     if (pcap == NULL) {
@@ -148,8 +164,10 @@ int main(int argc,char**argv)
 
     u_char packet_buffer[sizeof(struct arp)];
 
+victim에게 보낼 arp구조체를 복사해줍니다.
     //packet send to arp to victim
     memcpy(packet_buffer, &broad_victim, sizeof(struct arp));
+
 
     if(pcap_sendpacket(pcap, packet_buffer, sizeof(arp)) != 0){
         fprintf(stderr, "Error sending ARP request : %s\n", pcap_geterr(pcap));
