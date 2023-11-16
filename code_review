@@ -42,7 +42,7 @@ Param에 대한 선언 부분입니다.
 typedef struct {
     char* dev_;
 } Param;
-장비에 대한 정보를 NULL값으로 주고
+장비에 대한 정보를 NULL값으로 초기화 해줍니다
 Param param = {
     .dev_ = NULL
 };
